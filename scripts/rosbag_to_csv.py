@@ -8,27 +8,69 @@ import rospy
 import subprocess
 from optparse import OptionParser
 from datetime import datetime
+import sensor_msgs.point_cloud2 as pc2
+from geometry_msgs.msg import PointStamped;
 
 
-def message_to_csv(stream, msg, flatten=False):
+def point_cloud_message_to_csv(stream, pc_msg, time,  flatten=False):
+    points_reader = pc2.read_points(pc_msg)
+    num_points = pc_msg.height * pc_msg.width
+    index = 0
+    for p in points_reader:
+        if (index>0):
+            stream.write(
+                    datetime.fromtimestamp(
+                        time.to_time()).strftime('%Y/%m/%d/%H:%M:%S.%f'))     
+        for field in p:
+            msg_str = str(field)
+            if msg_str.find(",") != -1:
+                if flatten:
+                    msg_str = msg_str.strip("(")
+                    msg_str = msg_str.strip(")")
+                    msg_str = msg_str.strip(" ")
+                else:
+                    msg_str = "\"" + msg_str + "\""
+            stream.write("," + msg_str)
+        index += 1
+        if (index<num_points):
+            stream.write('\n')
+
+def point_stamped_message_to_csv(stream, ps_msg, time,  flatten=False):
+
+    # stream.write(datetime.fromtimestamp(
+    #                     time.to_time()).strftime('%Y/%m/%d/%H:%M:%S.%f'))  
+    
+    x = str(ps_msg.point.x)
+    y = str(ps_msg.point.y)
+    z = str(ps_msg.point.z)
+
+    stream.write("," +x +"," + y + "," + z)
+
+
+def message_to_csv(stream, msg, time, flatten=False):
     """
     stream: StringIO
     msg: message
     """
-    try:
-        for s in type(msg).__slots__:
-            val = msg.__getattribute__(s)
-            message_to_csv(stream, val, flatten)
-    except BaseException:
-        msg_str = str(msg)
-        if msg_str.find(",") != -1:
-            if flatten:
-                msg_str = msg_str.strip("(")
-                msg_str = msg_str.strip(")")
-                msg_str = msg_str.strip(" ")
-            else:
-                msg_str = "\"" + msg_str + "\""
-        stream.write("," + msg_str)
+    if (msg._type=="sensor_msgs/PointCloud2"):
+        point_cloud_message_to_csv(stream, msg, time, flatten)
+    elif (msg._type=="geometry_msgs/PointStamped"):
+        point_stamped_message_to_csv(stream, msg, time, flatten)
+    else:
+        try:
+            for s in type(msg).__slots__:
+                val = msg.__getattribute__(s)
+                message_to_csv(stream, val, time,  flatten)
+        except BaseException:
+            msg_str = str(msg)
+            if msg_str.find(",") != -1:
+                if flatten:
+                    msg_str = msg_str.strip("(")
+                    msg_str = msg_str.strip(")")
+                    msg_str = msg_str.strip(" ")
+                else:
+                    msg_str = "\"" + msg_str + "\""
+            stream.write("," + msg_str)
 
 
 def message_type_to_csv(stream, msg, parent_content_name=""):
@@ -36,13 +78,21 @@ def message_type_to_csv(stream, msg, parent_content_name=""):
     stream: StringIO
     msg: message
     """
-    try:
-        for s in type(msg).__slots__:
-            val = msg.__getattribute__(s)
-            message_type_to_csv(stream, val, ".".join(
-                [parent_content_name, s]))
-    except BaseException:
-        stream.write("," + parent_content_name)
+    if (msg._type=="sensor_msgs/PointCloud2"):
+        # We need to put the fields on the header
+        for field in msg.fields:
+            stream.write("," + field.name)
+
+    elif (msg._type=="geometry_msgs/PointStamped"):
+        stream.write(",x,y,z");
+    else:
+        try:
+            for s in type(msg).__slots__:
+                val = msg.__getattribute__(s)
+                message_type_to_csv(stream, val, ".".join(
+                    [parent_content_name, s]))
+        except BaseException:
+            stream.write("," + parent_content_name)
 
 
 def format_csv_filename(form, topic_name):
@@ -92,7 +142,7 @@ def bag_to_csv(options, fname):
             stream.write(
                 datetime.fromtimestamp(
                     time.to_time()).strftime('%Y/%m/%d/%H:%M:%S.%f'))
-            message_to_csv(stream, msg, flatten=not options.header)
+            message_to_csv(stream, msg, time, flatten=not options.header)
             stream.write('\n')
         [s.close for s in streamdict.values()]
     except Exception as e:
